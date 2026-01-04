@@ -67,6 +67,19 @@ pipeline {
                 archiveArtifacts artifacts: 'logs/trivy.log', fingerprint: true
             }
         }
+        stage('OWASP ZAP Scan') { 
+            steps { 
+            // Usando la imagen oficial de ZAP en Docker 
+            bat """ 
+                docker run --rm -v %WORKSPACE%/logs:/zap/wrk owasp/zap2docker-stable zap-baseline.py \ 
+                -t http://localhost:8080 \ 
+                -r zap-report.html > logs/zap.log 2>&1 
+                """ 
+                // Archivar el reporte y los logs 
+                archiveArtifacts artifacts: 'logs/zap.log', fingerprint: true 
+                archiveArtifacts artifacts: 'zap-report.html', fingerprint: true 
+            } 
+        }
 
         stage('Push DockerHub') {
             when { expression { params.DO_PUSH } }
