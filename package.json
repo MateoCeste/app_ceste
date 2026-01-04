@@ -1,14 +1,15 @@
 {
-  "name": "rest_api_node_ts_server",
+  "name": "app",
   "version": "1.0.0",
-  "description": "REST API's con Express y Typescript",
+  "description": "REST API's microservice",
   "main": "index.js",
   "scripts": {
     "dev": "nodemon --exec ts-node src/index.ts",
     "test": "jest --detectOpenHandles",
     "test:coverage": "npm run pretest && jest --detectOpenHandles --coverage",
     "pretest": "ts-node ./src/data --clear",
-    "posttest": ""
+    "posttest": "",
+    "build": "tsc"
   },
   "author": "Mateo Rosas",
   "license": "ISC",
