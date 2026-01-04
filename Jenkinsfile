@@ -2,28 +2,17 @@ pipeline {
     agent any
 
     parameters {
-        string(
-            name: 'APP_VERSION',
-            defaultValue: 'latest',
-            description: 'Tag/versión de la imagen Docker'
-        )
-        booleanParam(
-            name: 'DO_BUILD',
-            defaultValue: true,
-            description: '¿Construir la imagen Docker?'
-        )
-        booleanParam(
-            name: 'DO_PUSH',
-            defaultValue: true,
-            description: '¿Hacer push a DockerHub?'
-        )
+        string(name: 'APP_VERSION', defaultValue: 'latest', description: 'Tag/versión de la imagen Docker')
+        booleanParam(name: 'DO_BUILD', defaultValue: true, description: '¿Construir la imagen Docker?')
+        booleanParam(name: 'DO_PUSH', defaultValue: true, description: '¿Hacer push a DockerHub?')
     }
 
     environment {
         DOCKERHUB_USER = 'pruebasceste'
         IMAGE_NAME     = 'ceste-ci-demo'
         SONAR_HOST_URL = 'http://localhost:9000'
-        SONAR_TOKEN = 'squ_b1a9d61247f83e988121cdaed0579abc150b9c22'
+        SONAR_TOKEN    = credentials('sonar-token')   // Usa credencial segura en Jenkins
+        DOCKERHUB_TOKEN = credentials('dockerhub-token')
     }
 
     stages {
@@ -36,19 +25,16 @@ pipeline {
 
         stage('Install & Tests (npm)') {
             steps {
-                // Instalación de dependencias y ejecución de tests
-                bat 'npm install'
-                bat 'npm test'
+                bat 'npm ci > logs/npm-install.log 2>&1'
+                bat 'npm test > logs/npm-test.log 2>&1'
+                archiveArtifacts artifacts: 'logs/npm-*.log', fingerprint: true
             }
         }
 
         stage('Build app') {
             steps {
-                // Generar la carpeta dist/ con el “build” del proyecto
-                bat 'npm run build'
-
-                // Archivar dist/ como artefacto en Jenkins (opcional)
-                archiveArtifacts artifacts: 'dist/**', fingerprint: true
+                bat 'npm run build > logs/npm-build.log 2>&1'
+                archiveArtifacts artifacts: 'dist/**, logs/npm-build.log', fingerprint: true
             }
         }
 
@@ -58,40 +44,58 @@ pipeline {
                     sonar-scanner ^
                       -Dsonar.projectKey=ceste-ci-demo ^
                       -Dsonar.sources=. ^
-                      -Dsonar.host.url=http://localhost:9000 ^
-                      -Dsonar.login=%SONAR_TOKEN%
+                      -Dsonar.host.url=%SONAR_HOST_URL% ^
+                      -Dsonar.login=%SONAR_TOKEN% > logs/sonar.log 2>&1
                 """
+                archiveArtifacts artifacts: 'logs/sonar.log', fingerprint: true
             }
         }
 
         stage('Build Docker') {
-            when {
-                expression { params.DO_BUILD }
-            }
+            when { expression { params.DO_BUILD } }
             steps {
                 bat """
-                    docker build -t %DOCKERHUB_USER%/%IMAGE_NAME%:%APP_VERSION% .
+                    docker build --target prod -t %DOCKERHUB_USER%/%IMAGE_NAME%:%APP_VERSION% . > logs/docker-build.log 2>&1
                 """
+                archiveArtifacts artifacts: 'logs/docker-build.log', fingerprint: true
             }
         }
 
         stage('Trivy Scan') {
             steps {
-                // Escaneo de la imagen recién construida
-                bat "trivy image --severity HIGH,CRITICAL --exit-code 1 %DOCKERHUB_USER%/%IMAGE_NAME%:%APP_VERSION%"
+                bat "trivy image --severity HIGH,CRITICAL --exit-code 1 %DOCKERHUB_USER%/%IMAGE_NAME%:%APP_VERSION% > logs/trivy.log 2>&1"
+                archiveArtifacts artifacts: 'logs/trivy.log', fingerprint: true
             }
+        }
+        stage('OWASP ZAP Scan') { 
+            steps { 
+            // Usando la imagen oficial de ZAP en Docker 
+            bat """ 
+                docker run --rm -v %WORKSPACE%/logs:/zap/wrk owasp/zap2docker-stable zap-baseline.py \ 
+                -t http://localhost:8080 \ 
+                -r zap-report.html > logs/zap.log 2>&1 
+                """ 
+                // Archivar el reporte y los logs 
+                archiveArtifacts artifacts: 'logs/zap.log', fingerprint: true 
+                archiveArtifacts artifacts: 'zap-report.html', fingerprint: true 
+            } 
         }
 
         stage('Push DockerHub') {
-            when {
-                expression { params.DO_PUSH }
-            }
+            when { expression { params.DO_PUSH } }
             steps {
                 bat """
-                    docker login -u %DOCKERHUB_USER% -p %DOCKERHUB_TOKEN%
-                    docker push %DOCKERHUB_USER%/%IMAGE_NAME%:%APP_VERSION%
+                    docker login -u %DOCKERHUB_USER% -p %DOCKERHUB_TOKEN% > logs/docker-login.log 2>&1
+                    docker push %DOCKERHUB_USER%/%IMAGE_NAME%:%APP_VERSION% > logs/docker-push.log 2>&1
                 """
+                archiveArtifacts artifacts: 'logs/docker-*.log', fingerprint: true
             }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'logs/*.log', fingerprint: true
         }
     }
 }
